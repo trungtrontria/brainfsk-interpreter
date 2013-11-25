@@ -14,6 +14,6 @@ public class BrainFsk {
 	 */
 	public static void main(String[] args) {
 		BrainFskInterpreter interpreter = new BrainFskInterpreter();
-		interpreter.interprete("asdassdasdasd");
+		interpreter.interprete(",.,.,.>++<-->+");
 	}
 }
