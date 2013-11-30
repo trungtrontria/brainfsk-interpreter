@@ -11,7 +11,10 @@ public class BrainFskToken {
 		public static final int TOKEN_INPUT 			= 0x06;
 		public static final int TOKEN_CONDITION_OPEN 	= 0x07;
 		public static final int TOKEN_CONDITION_CLOSE 	= 0x08;
+		public static final int TOKEN_DUMP				= 0x09;
+		public static final int TOKEN_RESET				= 0x0A;
 		public static final int TOKEN_UNKNOWN		 	= 0xff;
+		
 	}
 	
 	private int tokenType;
@@ -57,6 +60,12 @@ public class BrainFskToken {
 			break;
 		case ',':
 			type = TokenType.TOKEN_INPUT;
+			break;
+		case '#':
+			type = TokenType.TOKEN_DUMP;
+			break;
+		case '~':
+			type = TokenType.TOKEN_RESET;
 			break;
 		default:
 			type = TokenType.TOKEN_UNKNOWN;

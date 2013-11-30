@@ -1,7 +1,12 @@
 package com.trontria.brainfsk;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.Reader;
 import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
 
 import com.trontria.log.Log;
 
@@ -14,27 +19,33 @@ public class BrainFskInterpreter {
 	}
 	
 	private String memSource;
-	private ArrayList<Integer> memData; 
-	private ArrayList<Integer> register;
+	private List<Integer> memData; 
+	private List<Integer> register;
+	private List<Integer> conditionStack;
 	
 	public BrainFskInterpreter() {
-		init("");
+		reset();
+		Log.debug(false);
 	}
 	
-	private void init(String source) {
+	public void reset() {
 		Log.debug(TAG, "Initialize");
-		memSource = source;
+		
+		// Data of the memory, mostly pointers
 		memData = new ArrayList<>();
 		
-		register = new ArrayList<Integer>();
-		register.add(0);
-		register.add(0);
-	}
-	
-	public void interprete(String sourceString) {
-		Log.debug(TAG, "About to interprete: " + sourceString);
-		init(sourceString);
+		// List of the registers, contains data
+		if (register == null) {
+			register = new ArrayList<Integer>();
+			register.add(0);
+			register.add(0);
+		}
+		setRegisterValue(Register.REG_DAT_PTS, 0);
 		
+		// Contains the loop list
+		conditionStack = new LinkedList<>();
+	}
+	private void interprete() {
 		BrainFskToken token = null;
 		while ((token = nextToken()) != null) {
 			if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_MOVE_RIGHT) {
@@ -52,16 +63,51 @@ public class BrainFskInterpreter {
 			} else if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_OUTPUT) {
 				out();
 				srcNext();
+			} else if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_DUMP) {
+				dump();
+				srcNext();
 			} else if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_INPUT) {
 				set(in());
 				srcNext();
+			} else if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_RESET) {
+				reset();
+				srcNext();
+			} else if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_CONDITION_OPEN) {
+				Log.debug(TAG, "conditionOpen@" + currentSrcPts());
+				if (equalZero()) {
+					Log.debug(TAG, "zero");
+					int index = 0;
+					while (!isEmpty() && ((index = peek()) >= currentSrcPts() )) {
+						pop();
+						Log.debug(TAG, "Popped " + index);
+						Log.debug(TAG, "stack@" + conditionStack.size());
+					}
+					skipTillOut();
+				} else {
+					Log.debug(TAG, "noZero");
+					if (isEmpty() || currentSrcPts() != peek()) {
+						push(currentSrcPts());
+						Log.debug(TAG, "Pushed " + currentSrcPts());
+					}
+					Log.debug(TAG, "peek@" + peek());
+					srcNext();
+				}
+			} else if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_CONDITION_CLOSE) {
+				Log.debug(TAG, "conditionClose@" + currentSrcPts());
+				srcGoto(peek());
 			} else {
 				// Do nothing, just skip
+				srcNext();
 			}
 		}
-		
-		// Dump final values
-		dump();
+	}
+	public void interprete(String sourceString, boolean continueInterprete) {
+		Log.debug(TAG, "About to interprete: " + sourceString);
+		memSource = sourceString;
+		srcGoto(0);
+		if (!continueInterprete)
+			reset();
+		interprete();
 	}
 	
 	private BrainFskToken nextToken() {
@@ -75,38 +121,84 @@ public class BrainFskInterpreter {
 		return token;
 	}
 	// ========================================================================
+	// Conditonal operations
+	// ========================================================================
+	private void push(int offset) {
+		conditionStack.add(offset);
+	}
+	private int pop() {
+		int offset = peek();
+		conditionStack.remove(conditionStack.size() - 1);
+		return offset;
+	}
+	private int peek() {
+		int offset = conditionStack.get(conditionStack.size() - 1);
+		return offset;
+	}
+	
+	private boolean isEmpty() {
+		return conditionStack.isEmpty();
+	}
+	
+	private void skipTillOut() {
+		srcNext();
+		int count = 1;
+		BrainFskToken token = null;
+		while (count > 0 ) {
+			token = nextToken();
+			if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_CONDITION_OPEN) {
+				count++;
+				Log.debug(TAG, "Count @" + count);
+			} else if (token.getTokenType() == BrainFskToken.TokenType.TOKEN_CONDITION_CLOSE) {
+				count--;
+				Log.debug(TAG, "Count @" + count);
+			}
+			srcNext();
+			Log.debug(TAG, "Now @" + currentSrcPts());
+		}
+	}
+	// ========================================================================
 	// Dump registers
 	// ========================================================================
 	public void dump() {
-		Log.debug(TAG, "Registers: ");
+		System.out.println();
+		Log.log(TAG, "= DUMP DATA =====================================");
+		Log.log(TAG, "Registers: ");
 		for (int i = 0; i < register.size(); i++) {
-			Log.debug(TAG, "PTS @" + i + ": " + getRegisterValue(i));
+			String holder = "PTS @0x%02x: %d";
+			Log.log(TAG, String.format(holder, i, getRegisterValue(i)));
 		}
-		Log.debug(TAG, "Data: ");
+		Log.log(TAG, "Data: ");
 		for (int i = 0; i < memData.size(); i++) {
-			Log.debug(TAG, "DAT @" + i + ": " + memData.get(i));
+			String holder = "DAT @0x%04x: %d";
+			Log.log(TAG, String.format(holder, i, memData.get(i)));
 		}
+		Log.log(TAG, "= END DUMP DATA =================================");
 	}
 	// ========================================================================
 	// Data
 	// ========================================================================
 	private void out() {
-		System.out.print((char) get());
+		try {
+			getOutStream().write(get());
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
 	private int in() {
 		try {
-			return System.in.read();
+			return getInStream().read();
 		} catch (IOException e) {
 			e.printStackTrace();
 			return '\0';
 		}
 	}
 	private void inc() {
-		// Log.debug(TAG, "inc");
+//		Log.debug(TAG, "inc");
 		set(get() + 1);
 	}
 	private void dec() {
-		// Log.debug(TAG, "dec");
+//		Log.debug(TAG, "dec");
 		set(get() - 1);
 	}
 	private int get() {
@@ -123,6 +215,29 @@ public class BrainFskInterpreter {
 	}
 	private boolean equalZero() {
 		return get() == 0;
+	}
+	// ========================================================================
+	// IO Stream
+	// ========================================================================
+	private InputStream in;
+	private OutputStream out;
+
+	public InputStream getInStream() {
+		if (in == null) in = System.in;
+		return in;
+	}
+
+	public void setInStream(InputStream in) {
+		this.in = in;
+	}
+	
+	public OutputStream getOutStream() {
+		if (out == null) out = System.out;
+		return out;
+	}
+
+	public void setOutStream(OutputStream out) {
+		this.out = out;
 	}
 	// ========================================================================
 	// Pointer
@@ -144,17 +259,17 @@ public class BrainFskInterpreter {
 	}
 	
 	private void datNext() {
-		// Log.debug(TAG, "datNext");
 		moveNext(Register.REG_DAT_PTS);
 		
+//		Log.debug(TAG, "datNext" + currentDatPts());
 		// Add the data so there'll be no index out of bound
 		while (currentDatPts() >= memData.size()) {
 			memData.add(0);
 		}
 	}
 	private void datPrev() {
-		// sLog.debug(TAG, "datPrev");
 		movePrevious(Register.REG_DAT_PTS);
+//		Log.debug(TAG, "datPrev" + currentDatPts());
 	}
 	
 	private void moveNext(int regId) {
